@@ -1,5 +1,5 @@
 Redis-full-check is used to compare whether two redis have the same data. We also offer a data synchronization tool called [redis-shake](https://github.com/aliyun/redis-shake) to syncing data from one redis to another redis.<br>
-Thanks to the Douyu's WSD team for the support. 感谢斗鱼公司的web服务部提供的支持。<br>
+Thanks to the Douyu's WSD team for the support. <br>
 
 * [中文文档](https://yq.aliyun.com/articles/690463)
 
@@ -8,7 +8,10 @@ Thanks to the Douyu's WSD team for the support. 感谢斗鱼公司的web服务�
 Redis-full-check is developed and maintained by NoSQL Team in Alibaba-Cloud Database department.<br>
 Redis-full-check performs full data verification by comparing the data of the source database and the destination database. The entire check process consists of multiple comparisons, in every comparison, redis-full-check fetches data from two dabatases and then compared, the inconsistent data is put into sqlite3 db for the next comparison. By this iteratively comparing method, the difference continues to converge. The following figure shows the dataflow. In every comparison which is the yellow box, redis-full-check fetches all keys firstly. After that, it runs comparison and stores the difference result(key and field) into the sqlite3 db which is the position that keys and fields can be fetched in next round instead of the source database.<br>
 ![dataflow.png](https://github.com/aliyun/redis-full-check/blob/master/resources/dataflow.png)<br>
-Redis-full-check only checks whether the target database is a subset of the source database. If you want to know whether the data in the source and destination databases are exactly the same, you need to set up a bidirectional link.<br>
+Redis-full-check fetches keys from source and then checks these keys exist on the target. So if one key exists on the target but lack on the source, redis-full-check can't find it. If you want to know whether the data in the source and destination databases are exactly the same, you need to set up a bidirectional link: <br>
+
+* source->RedisFullCheck->target
+* target->RedisFullCheck->source
 
 # Code branch rules
 Version rules: a.b.c.<br>
@@ -20,7 +23,7 @@ Version rules: a.b.c.<br>
 | branch name | rules |
 | - | :- |
 | master | master branch, do not allowed push code. store the latest stable version. develop branch will merge into this branch once new version created. |
-| develop | develop branch. all the bellowing branches fork from this. |
+| **develop**(main branch) | develop branch. all the bellowing branches fork from this. |
 | feature-\* | new feature branch. forked from develop branch and then merge back after finish developing, testing, and code review. |
 | bugfix-\* | bugfix branch. forked from develop branch and then merge back after finish developing, testing, and code review. |
 | improve-\* | improvement branch. forked from develop branch and then merge back after finish developing, testing, and code review.  |
@@ -41,9 +44,10 @@ Application Options:
   -a, --targetpassword=Password     Set target redis password
       --targetauthtype=AUTH-TYPE    useless for opensource redis, valid value:auth/adminauth (default: auth)
   -d, --db=Sqlite3-DB-FILE          sqlite3 db file for store result. If exist, it will be removed and a new file is created. (default: result.db)
-      --comparetimes=COUNT          Total compare count, at least 1. In the first round, all keys will be compared. The subsequent rounds of the comparison will be done on the previous results. (default: 3)
-  -m, --comparemode=                compare mode, 1: compare full value, 2: only compare value length, 3: only compare keys outline, 4: compare full value, but only compare value length when meets big key
-                                    (default: 2)
+      --comparetimes=COUNT          Total compare count, at least 1. In the first round, all keys will be compared. The subsequent rounds of the comparison
+                                    will be done on the previous results. (default: 3)
+  -m, --comparemode=                compare mode, 1: compare full value, 2: only compare value length, 3: only compare keys outline, 4: compare full value,
+                                    but only compare value length when meets big key (default: 2)
       --id=                         used in metric, run id (default: unknown)
       --jobid=                      used in metric, job id (default: unknown)
       --taskid=                     used in metric, task id (default: unknown)
@@ -55,24 +59,28 @@ Application Options:
       --result=FILE                 store all diff result, format is 'db	diff-type	key	field'
       --metric=FILE                 metrics file
       --bigkeythreshold=COUNT
+  -f, --filterlist=FILTER           if the filter list isn't empty, all elements in list will be synced. The input should be split by '|'. The end of the
+                                    string is followed by a * to indicate a prefix match, otherwise it is a full match. e.g.: 'abc*|efg|m*' matches 'abc',
+                                    'abc1', 'efg', 'm', 'mxyz', but 'efgh', 'p' aren't'
   -v, --version
 
 Help Options:
   -h, --help                        Show this help message
-
 ```
 
 # Usage
 ---
-*  git clone https://github.com/aliyun/redis-full-check.git
-*  cd redis-full-check/src/vendor
+Run `./bin/redis-full-check.darwin64` or `redis-full-check.linux64` which is built in OSX and Linux respectively, however, the binaries aren't always the newest version.<br>
+Or you can build redis-full-check yourself according to the following steps:<br>
+*  git clone https://github.com/alibaba/RedisFullCheck.git
+*  cd RedisFullCheck/src/vendor
 *  GOPATH=\`pwd\`/../..; govendor sync     #please note: must install govendor first and then pull all dependencies
 *  cd ../../ && ./build.sh
 *  ./redis-full-check -s $(source_redis_ip_port) -p $(source_password) -t $(target_redis_ip_port) -a $(target_password) # these parameters should be given by users
 
 Here comes the sqlite3 example to display the conflict result:<br>
 ```
-$ sqlite3 result.db.3  # result.db.x shows the x-round comparison conflict result.
+$ sqlite3 result.db.3  # result.db.x shows the x-round comparison conflict result. len == -1 means inconsistent key type.
 
 sqlite> select * from key;
 id          key              type        conflict_type  db          source_len  target_len
@@ -91,3 +99,13 @@ id          field       conflict_type  key_id
 2           k2          value          2
 3           k3          lack_target    2
 ```
+
+# Shake series tool
+---
+We also provide some tools for synchronization in Shake series.<br>
+
+* [MongoShake](https://github.com/aliyun/MongoShake): mongodb data synchronization tool.
+* [RedisShake](https://github.com/aliyun/RedisShake): redis data synchronization tool.
+* [RedisFullCheck](https://github.com/aliyun/RedisFullCheck): redis data synchronization verification tool.
+
+Plus, we have a WeChat group so that users can join and discuss, but the group user number is limited. So please add my WeChat number: `vinllen_xingge` first, and I will add you to this group.<br>
