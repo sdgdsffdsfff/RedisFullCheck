@@ -2,7 +2,7 @@ package common
 
 import (
 	"bytes"
-	"fmt"
+	"strings"
 	"strconv"
 )
 
@@ -28,33 +28,26 @@ func ParseInfo(content []byte) map[string]string {
 	return result
 }
 
-
-func ParseKeyspace(content []byte) (map[int32]int64, error) {
-	if bytes.HasPrefix(content, []byte("# Keyspace")) == false {
-		return nil, fmt.Errorf("invalid info Keyspace: %s", string(content))
+func FilterDBList(dbs string) map[int]struct{} {
+	ret := make(map[int]struct{})
+	// empty
+	if dbs == "-1" {
+		return ret
 	}
 
-	lines := bytes.Split(content, []byte("\n"))
-	reply := make(map[int32]int64)
-	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if bytes.HasPrefix(line, []byte("db")) == true {
-			// line "db0:keys=18,expires=0,avg_ttl=0"
-			items := bytes.Split(line, []byte(":"))
-			db, err := strconv.Atoi(string(items[0][2:]))
-			if err != nil {
-				return nil, err
-			}
-			nums := bytes.Split(items[1], []byte(","))
-			if bytes.HasPrefix(nums[0], []byte("keys=")) == false {
-				return nil, fmt.Errorf("invalid info Keyspace: %s", string(content))
-			}
-			keysNum, err := strconv.ParseInt(string(nums[0][5:]), 10, 0)
-			if err != nil {
-				return nil, err
-			}
-			reply[int32(db)] = int64(keysNum)
-		} // end true
-	} // end for
-	return reply, nil
+	// empty
+	dbList := strings.Split(dbs, Splitter)
+	if len(dbList) == 0 {
+		return ret
+	}
+
+	for _, ele := range dbList {
+		val, err := strconv.Atoi(ele)
+		if err != nil {
+			panic(err)
+		}
+
+		ret[val] = struct{}{}
+	}
+	return ret
 }

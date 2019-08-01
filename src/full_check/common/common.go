@@ -7,11 +7,23 @@ const (
 	StatRollFrequency = 2  // client attribute
 
 	TypeChanged int64 = -1 // marks the given key type is change, e.g. from string to list
+
+	// db type
+	TypeDB           = 0 // db
+	TypeCluster      = 1
+	TypeAliyunProxy  = 2 // aliyun proxy
+	TypeTencentProxy = 3 // tencent cloud proxy
+
+	TypeMaster = "master"
+	TypeSlave  = "slave"
+	TypeAll    = "all"
+
+	Splitter = ";"
 )
 
 var (
 	BigKeyThreshold int64 = 16384
-	Logger seelog.LoggerInterface
+	Logger          seelog.LoggerInterface
 )
 
 /*
