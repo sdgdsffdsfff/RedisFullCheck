@@ -128,10 +128,10 @@ func (p *FullCheck) PrintStat(finished bool) {
 		if p.stat.ConflictKey[i][common.NoneConflict].Total() != 0 {
 			metricStat.KeyMetric[i.String()]["equal"] = p.stat.ConflictKey[i][common.NoneConflict].Json()
 			if p.times == p.CompareCount {
-				fmt.Fprintf(&buf, "KeyEqualAtLast|%s|%s|%v\n", i, common.NoneConflict, 
+				fmt.Fprintf(&buf, "KeyEqualAtLast|%s|%s|%v\n", i, common.NoneConflict,
 					p.stat.ConflictKey[i][common.NoneConflict])
 			} else {
-				fmt.Fprintf(&buf, "KeyEqualInProcess|%s|%s|%v\n", i, common.NoneConflict, 
+				fmt.Fprintf(&buf, "KeyEqualInProcess|%s|%s|%v\n", i, common.NoneConflict,
 					p.stat.ConflictKey[i][common.NoneConflict])
 			}
 		}
@@ -254,7 +254,7 @@ func (p *FullCheck) Start() {
 
 		for db := range p.sourceLogicalDBMap {
 			p.currentDB = db
-			p.stat.Reset()
+			p.stat.Reset(false)
 			// init stat timer
 			tickerStat := time.NewTicker(time.Second * common.StatRollFrequency)
 			ctxStat, cancelStat := context.WithCancel(context.Background()) // 主动cancel
@@ -315,9 +315,14 @@ func (p *FullCheck) Start() {
 			cancelStat() // stop stat goroutine
 			p.PrintStat(true)
 		} // for db, keyNum := range dbNums
+
+		// do not reset when run the final time
+		if p.times < p.CompareCount {
+			p.stat.Reset(true)
+		}
 	} // end for
 
-	p.stat.Reset()
+	p.stat.Reset(false)
 	common.Logger.Infof("--------------- finished! ----------------\nall finish successfully, totally %d key(s) and %d field(s) conflict",
 		p.stat.TotalConflictKeys, p.stat.TotalConflictFields)
 }
@@ -411,7 +416,7 @@ func (p *FullCheck) WriteConflictKey(conflictKey <-chan *common.Key) {
 
 	var resultfile *os.File
 	if len(conf.Opts.ResultFile) > 0 {
-		resultfile, _ = os.OpenFile(conf.Opts.ResultFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		resultfile, _ = os.OpenFile(conf.Opts.ResultFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		defer resultfile.Close()
 	}
 

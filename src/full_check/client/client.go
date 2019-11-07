@@ -13,6 +13,7 @@ import (
 
 	"github.com/garyburd/redigo/redis"
 	redigoCluster "github.com/vinllen/redis-go-cluster"
+	"reflect"
 )
 
 var (
@@ -56,7 +57,7 @@ func NewRedisClient(redisHost RedisHost, db int32) (RedisClient, error) {
 	// send ping command first
 	ret, err := rc.Do("ping")
 	if err == nil && ret.(string) != "PONG" {
-		return RedisClient{}, fmt.Errorf("ping return invaild[%v]", string(ret.([]byte)))
+		return RedisClient{}, fmt.Errorf("ping return invaild[%v]", ret)
 	}
 	return rc, err
 }
@@ -83,51 +84,56 @@ func (p *RedisClient) CheckHandleNetError(err error) bool {
 }
 
 func (p *RedisClient) Connect() error {
-	var err error
-	if p.conn == nil {
-		if p.redisHost.IsCluster() == false {
-			// single db or proxy
-			if p.redisHost.TimeoutMs == 0 {
-				p.conn, err = redis.Dial("tcp", p.redisHost.Addr[0])
-			} else {
-				p.conn, err = redis.DialTimeout("tcp", p.redisHost.Addr[0], time.Millisecond*time.Duration(p.redisHost.TimeoutMs),
-					time.Millisecond*time.Duration(p.redisHost.TimeoutMs), time.Millisecond*time.Duration(p.redisHost.TimeoutMs))
-			}
-		} else {
-			// cluster
+	if p.conn != nil {
+		return nil
+	}
 
-			cluster, err := redigoCluster.NewCluster(
-				&redigoCluster.Options{
-					StartNodes:   p.redisHost.Addr,
-					ConnTimeout:  time.Duration(p.redisHost.TimeoutMs) * time.Millisecond,
-					ReadTimeout:  0,
-					WriteTimeout: 0,
-					KeepAlive:    16,
-					AliveTime:    60 * time.Second,
-					Password:     p.redisHost.Password,
-				})
-			if err == nil {
-				p.conn = common.NewClusterConn(cluster, 0)
-			}
+	var err error
+	if p.redisHost.IsCluster() == false {
+		// single db or proxy
+		if p.redisHost.TimeoutMs == 0 {
+			p.conn, err = redis.Dial("tcp", p.redisHost.Addr[0])
+		} else {
+			p.conn, err = redis.DialTimeout("tcp", p.redisHost.Addr[0], time.Millisecond*time.Duration(p.redisHost.TimeoutMs),
+				time.Millisecond*time.Duration(p.redisHost.TimeoutMs), time.Millisecond*time.Duration(p.redisHost.TimeoutMs))
 		}
+	} else {
+		// cluster
+		cluster, err := redigoCluster.NewCluster(
+			&redigoCluster.Options{
+				StartNodes:   p.redisHost.Addr,
+				ConnTimeout:  time.Duration(p.redisHost.TimeoutMs) * time.Millisecond,
+				ReadTimeout:  0,
+				WriteTimeout: 0,
+				KeepAlive:    16,
+				AliveTime:    60 * time.Second,
+				Password:     p.redisHost.Password,
+			})
+		if err == nil {
+			p.conn = common.NewClusterConn(cluster, 0)
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	if len(p.redisHost.Password) != 0 {
+		_, err = p.conn.Do(p.redisHost.Authtype, p.redisHost.Password)
 		if err != nil {
 			return err
 		}
+	}
 
-		if len(p.redisHost.Password) != 0 {
-			_, err = p.conn.Do(p.redisHost.Authtype, p.redisHost.Password)
-			if err != nil {
-				return err
-			}
+	if p.redisHost.DBType != common.TypeCluster {
+		_, err = p.conn.Do("select", p.db)
+		if err != nil {
+			return err
 		}
+	}
 
-		if p.redisHost.DBType != common.TypeCluster {
-			_, err = p.conn.Do("select", p.db)
-			if err != nil {
-				return err
-			}
-		}
-	} // p.conn == nil
+	if p.conn == nil {
+		return fmt.Errorf("connect host[%v] failed: unknown", p.redisHost.Addr)
+	}
 	return nil
 }
 
@@ -185,6 +191,7 @@ begin:
 				if p.CheckHandleNetError(err) {
 					continue
 				}
+				common.Logger.Errorf("connect failed[%v]", err)
 				return nil, err
 			}
 		}
@@ -195,6 +202,7 @@ begin:
 				if p.CheckHandleNetError(err) {
 					continue begin
 				}
+				common.Logger.Errorf("send command[%v] failed[%v]", ele.command, err)
 				return nil, err
 			}
 		}
@@ -203,6 +211,7 @@ begin:
 			if p.CheckHandleNetError(err) {
 				continue
 			}
+			common.Logger.Errorf("flush failed[%v]", err)
 			return nil, err
 		}
 
@@ -219,6 +228,7 @@ begin:
 					result[i] = common.TypeChanged
 					continue
 				}
+				common.Logger.Errorf("receive command[%v] failed[%v]", commands[i], err)
 				return nil, err
 			}
 			result[i] = reply
@@ -240,11 +250,19 @@ func (p *RedisClient) PipeTypeCommand(keyInfo []*common.Key) ([]string, error) {
 	result := make([]string, len(keyInfo))
 	if ret, err := p.PipeRawCommand(commands, ""); err != nil {
 		if err != emptyError {
+			common.Logger.Errorf("run PipeRawCommand with commands[%v] failed[%v]", commands, err)
 			return nil, err
 		}
 	} else {
 		for i, ele := range ret {
-			result[i] = ele.(string)
+			if v, ok := ele.(string); ok {
+				result[i] = v
+			} else {
+				err := fmt.Errorf("run PipeRawCommand with commands[%v] return element[%v] isn't type string[%v]",
+					commands, ele, reflect.TypeOf(ele))
+				common.Logger.Error(err)
+				return nil, err
+			}
 		}
 	}
 	return result, nil
@@ -266,7 +284,14 @@ func (p *RedisClient) PipeExistsCommand(keyInfo []*common.Key) ([]int64, error) 
 		}
 	} else {
 		for i, ele := range ret {
-			result[i] = ele.(int64)
+			if v, ok := ele.(int64); ok {
+				result[i] = v
+			} else {
+				err := fmt.Errorf("run PipeRawCommand with commands[%v] return element[%v] isn't type int64[%v]",
+					commands, ele, reflect.TypeOf(ele))
+				common.Logger.Error(err)
+				return nil, err
+			}
 		}
 	}
 	return result, nil
@@ -288,7 +313,14 @@ func (p *RedisClient) PipeLenCommand(keyInfo []*common.Key) ([]int64, error) {
 		}
 	} else {
 		for i, ele := range ret {
-			result[i] = ele.(int64)
+			if v, ok := ele.(int64); ok {
+				result[i] = v
+			} else {
+				err := fmt.Errorf("run PipeRawCommand with commands[%v] return element[%v] isn't type int64[%v]",
+					commands, ele, reflect.TypeOf(ele))
+				common.Logger.Error(err)
+				return nil, err
+			}
 		}
 	}
 	return result, nil
@@ -310,7 +342,14 @@ func (p *RedisClient) PipeTTLCommand(keyInfo []*common.Key) ([]bool, error) {
 		}
 	} else {
 		for i, ele := range ret {
-			result[i] = ele.(int64) == 0
+			if v, ok := ele.(int64); ok {
+				result[i] = v == 0
+			} else {
+				err := fmt.Errorf("run PipeRawCommand with commands[%v] return element[%v] isn't type int64[%v]",
+					commands, ele, reflect.TypeOf(ele))
+				common.Logger.Error(err)
+				return nil, err
+			}
 		}
 	}
 	return result, nil

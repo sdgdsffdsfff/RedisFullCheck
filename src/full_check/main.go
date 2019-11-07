@@ -2,15 +2,18 @@ package main
 
 import (
 	"fmt"
-	"full_check/common"
-	"github.com/jessevdk/go-flags"
 	"os"
 	"strconv"
 	"strings"
+
 	"full_check/configure"
 	"full_check/full_check"
 	"full_check/checker"
 	"full_check/client"
+	"full_check/common"
+
+	"github.com/jessevdk/go-flags"
+	"github.com/gugemichael/nimo4go"
 )
 
 var VERSION = "$"
@@ -45,7 +48,15 @@ func main() {
 	}
 
 	// init log
-	common.Logger, err = common.InitLog(conf.Opts.LogFile)
+	logLevel, err := common.HandleLogLevel(conf.Opts.LogLevel)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	nimo.Profiling(int(conf.Opts.SystemProfile))
+
+	common.Logger, err = common.InitLog(conf.Opts.LogFile, logLevel)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "init log failed: ", err)
 		os.Exit(1)
@@ -89,6 +100,20 @@ func main() {
 		common.BigKeyThreshold = conf.Opts.BigKeyThreshold
 	}
 
+	sourceAddressList, err := client.HandleAddress(conf.Opts.SourceAddr, conf.Opts.SourcePassword, conf.Opts.SourceAuthType)
+	if len(sourceAddressList) > 1 && conf.Opts.SourceDBType != 1 {
+		panic(common.Logger.Errorf("looks like the source is cluster? please set sourcedbtype"))
+	} else if len(sourceAddressList) == 0 {
+		panic(common.Logger.Errorf("input source address is empty"))
+	}
+
+	targetAddressList, err := client.HandleAddress(conf.Opts.TargetAddr, conf.Opts.TargetPassword, conf.Opts.TargetAuthType)
+	if len(targetAddressList) > 1 && conf.Opts.TargetDBType != 1 {
+		panic(common.Logger.Errorf("looks like the target is cluster? please set targetdbtype"))
+	} else if len(targetAddressList) == 0 {
+		panic(common.Logger.Errorf("input target address is empty"))
+	}
+
 	// filter list
 	var filterTree *common.Trie
 	if len(conf.Opts.FilterList) != 0 {
@@ -103,9 +128,14 @@ func main() {
 		common.Logger.Infof("filter list enabled: %v", filterList)
 	}
 
+	// remove result file if has
+	if len(conf.Opts.ResultFile) > 0 {
+		os.Remove(conf.Opts.ResultFile)
+	}
+
 	fullCheckParameter := checker.FullCheckParameter{
 		SourceHost: client.RedisHost{
-			Addr:         strings.Split(conf.Opts.SourceAddr, common.Splitter),
+			Addr:         sourceAddressList,
 			Password:     conf.Opts.SourcePassword,
 			TimeoutMs:    0,
 			Role:         "source",
@@ -114,7 +144,7 @@ func main() {
 			DBFilterList: common.FilterDBList(conf.Opts.SourceDBFilterList),
 		},
 		TargetHost: client.RedisHost{
-			Addr:         strings.Split(conf.Opts.TargetAddr, common.Splitter),
+			Addr:         targetAddressList,
 			Password:     conf.Opts.TargetPassword,
 			TimeoutMs:    0,
 			Role:         "target",
@@ -129,6 +159,10 @@ func main() {
 		Parallel:     parallel,
 		FilterTree:   filterTree,
 	}
+
+	common.Logger.Info("configuration: ", conf.Opts)
+	common.Logger.Info("---------")
+
 	fullCheck := full_check.NewFullCheck(fullCheckParameter, full_check.CheckType(conf.Opts.CompareMode))
 	fullCheck.Start()
 }
